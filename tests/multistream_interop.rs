@@ -154,16 +154,22 @@ fn run_diff(label: &str, data: &RefData) {
     }
 
     // rust_pcm is in the RFC 7845 Table 2 fixed Vorbis-order layout
-    // (for 6ch: L, C, R, RL, RR, LFE). ffmpeg's raw f32le export instead
-    // uses WAVE/SMPTE order (FL, FR, FC, LFE, BL, BR) for its own "5.1"
-    // channel-layout tag, so reorder rust_pcm to match before comparing —
-    // this is ffmpeg's own remapping on the reference side, not a decoder bug.
-    if channels == 6 {
-        const VORBIS_TO_WAVE: [usize; 6] = [0, 2, 1, 5, 3, 4];
+    // (6ch: L, C, R, RL, RR, LFE; 8ch: L, C, R, SL, SR, RL, RR, LFE).
+    // ffmpeg's raw f32le export instead uses WAVE/SMPTE order for its own
+    // "5.1"/"7.1" channel-layout tags (5.1: FL,FR,FC,LFE,BL,BR; 7.1 adds
+    // SL,SR: FL,FR,FC,LFE,BL,BR,SL,SR), so reorder rust_pcm to match before
+    // comparing — this is ffmpeg's own remapping on the reference side, not
+    // a decoder bug.
+    let vorbis_to_wave: Option<&[usize]> = match channels {
+        6 => Some(&[0, 2, 1, 5, 3, 4]),
+        8 => Some(&[0, 2, 1, 7, 5, 6, 3, 4]),
+        _ => None,
+    };
+    if let Some(perm) = vorbis_to_wave {
         let frames = rust_pcm.len() / channels;
         let mut reordered = vec![0.0f32; rust_pcm.len()];
         for f in 0..frames {
-            for (wave_c, &vorbis_c) in VORBIS_TO_WAVE.iter().enumerate() {
+            for (wave_c, &vorbis_c) in perm.iter().enumerate() {
                 reordered[f * channels + wave_c] = rust_pcm[f * channels + vorbis_c];
             }
         }
@@ -192,7 +198,7 @@ fn run_diff(label: &str, data: &RefData) {
     // in each channel column of rust_pcm vs. ref_pcm independently, so a
     // channel-order mismatch shows up directly without relying on sample-exact
     // alignment between the two decodes.
-    const CANDIDATE_FREQS: [f64; 6] = [100.0, 200.0, 300.0, 400.0, 500.0, 600.0];
+    const CANDIDATE_FREQS: [f64; 8] = [100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0];
     let analysis_start = (48_000usize / 10) * channels; // skip 100ms of onset
     let analysis_len = 4_800 * channels; // 100ms window
     if analysis_start + analysis_len <= rust_pcm.len() && analysis_start + analysis_len <= data.ref_pcm.len() {
